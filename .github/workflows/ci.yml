@@ -3,9 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - '**'
-    tags:
-      - "v*"
+      - 'main'
     paths-ignore:
       - 'README.md'
       - '.gitignore'
@@ -26,63 +24,29 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+  attestations: write
+
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
-    outputs:
-      on_main: ${{ steps.main_check.outputs.on_main }}
-    permissions:
-      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      
-      - name: Check whether commit matches main
-        id: main_check
+
+      - name: Read Caddy version
+        id: caddy-version
         run: |
-          git fetch origin main:refs/remotes/origin/main
-          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
-            echo "on_main=true" >> "$GITHUB_OUTPUT"
+          first_line="$(head -n 1 Dockerfile)"
+          if [[ "$first_line" =~ ^FROM[[:space:]]+caddy:([0-9]+\.[0-9]+\.[0-9]+)-builder-alpine[[:space:]]+AS[[:space:]]+builder$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
           else
-            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "Could not extract Caddy version from Dockerfile first line: $first_line" >&2
+            exit 1
           fi
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build test image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          load: true
-          tags: caddy:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Verify Cloudflare module
-        run: >-
-          docker run --rm caddy:test
-          caddy list-modules --packages | grep -Fx
-          'dns.providers.cloudflare github.com/caddy-dns/cloudflare'
-
-  publish:
-    needs: test
-    if: >-
-      github.ref_type == 'tag' &&
-      startsWith(github.ref_name, 'v') &&
-      !contains(github.ref_name, '-') &&
-      needs.test.outputs.on_main == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-      attestations: write
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -105,21 +69,44 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.caddy-version.outputs.version }}
             type=sha
 
-      - name: Build and publish image
+      - name: Build candidate image
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:candidate-${{ github.sha }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify Cloudflare module
+        run: >-
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:candidate-${{ github.sha }}
+          caddy list-modules --packages | grep -Fx 'dns.providers.cloudflare github.com/caddy-dns/cloudflare'
+
+      - name: Promote verified image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            docker buildx imagetools create \
+              --tag "$tag" \
+              "${REGISTRY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
+          done <<< "$IMAGE_TAGS"
+
       - name: Attest image provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}

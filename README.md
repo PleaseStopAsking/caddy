@@ -20,7 +20,7 @@ ghcr.io/pleasestopasking/caddy
 The workflow publishes these tags:
 
 - `latest` from the default branch
-- Git tags such as `v2.11.4-1`
+- Caddy version from the first line of the `Dockerfile`, such as `2.11.7`
 - Commit tags such as `sha-0123456`
 
 Published images support `linux/amd64` and `linux/arm64` and include build
