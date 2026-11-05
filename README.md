@@ -6,9 +6,6 @@ ACME DNS-01 challenges.
 
 ## Included versions
 
-- Caddy `2.11.4`
-- Cloudflare DNS module `v0.2.4`
-
 Versions are pinned in the `Dockerfile`. Dependabot monitors the Caddy base
 images and GitHub Actions; Cloudflare module updates are explicit pull requests.
 
