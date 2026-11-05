@@ -83,9 +83,9 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: ${{ github.event_name == 'push' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          load: ${{ github.event_name != 'push' }}
           tags: ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:candidate-${{ github.sha }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
