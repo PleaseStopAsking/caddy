@@ -22,7 +22,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 permissions:
   contents: read
@@ -36,6 +35,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Normalize image name
+        id: image-name
+        run: |
+          image_name="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "name=${image_name}" >> "$GITHUB_OUTPUT"
 
       - name: Read Caddy version
         id: caddy-version
@@ -65,7 +70,7 @@ jobs:
         id: metadata
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}
           tags: |
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
@@ -80,20 +85,21 @@ jobs:
           platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name == 'push' }}
           load: ${{ github.event_name == 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:candidate-${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:candidate-${{ github.sha }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Verify Cloudflare module
         run: >-
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:candidate-${{ github.sha }}
+          docker run --rm ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:candidate-${{ github.sha }}
           caddy list-modules --packages | grep -Fx 'dns.providers.cloudflare github.com/caddy-dns/cloudflare'
 
       - name: Promote verified image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
           IMAGE_TAGS: ${{ steps.metadata.outputs.tags }}
         run: |
           set -euo pipefail
@@ -109,6 +115,6 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v4
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
