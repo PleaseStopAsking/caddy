@@ -1,13 +1,22 @@
-name: Build container
+name: CI
 
 on:
   push:
     branches:
-      - main
+      - '**'
     tags:
       - "v*"
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.github/**'
   pull_request:
-  workflow_dispatch:
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.github/**'
 
 concurrency:
   group: container-${{ github.ref }}
@@ -45,7 +54,7 @@ jobs:
           'dns.providers.cloudflare github.com/caddy-dns/cloudflare'
 
   publish:
-    if: github.event_name != 'pull_request'
+    if: github.ref_type == 'tag' && github.ref_type == 'main' && startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')
     needs: test
     runs-on: ubuntu-latest
     permissions:
